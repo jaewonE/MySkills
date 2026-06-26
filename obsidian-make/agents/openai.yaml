@@ -1,0 +1,4 @@
+interface:
+  display_name: "obsidian Make"
+  short_description: "Guide Obsidian plugin creation and release"
+  default_prompt: "Use $obsidian-make to create, update, document, build, install, or prepare release work for an Obsidian plugin."
