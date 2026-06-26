@@ -43,3 +43,7 @@ Use this skill when creating, updating, documenting, building, installing, publi
 ### Cautions
 
 Follow the user's requested scope exactly. Do not publish, tag, create releases, or submit to the Obsidian Community Directory unless explicitly requested. For ordinary local plugin work, avoid expanding a small request into a full release workflow.
+
+## License
+
+This repository is distributed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.
