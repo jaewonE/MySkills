@@ -1,0 +1,6 @@
+kakao_daily_summary.config.json
+history/
+logs/
+__pycache__/
+*.pyc
+.DS_Store

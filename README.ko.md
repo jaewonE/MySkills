@@ -8,22 +8,23 @@
 
 ### 스킬 소개
 
-`kakaotalk`은 Jaewon의 로컬 KakaoTalk 일일 요약 자동화를 관리하는 스킬입니다. 안정적인 `chat_id`를 기준으로 채팅방을 선택하고, 요약 대상을 등록하며, 대화 추출, `agy`를 통한 Gemini 요약 실행, launchd 스케줄 관리를 수행하는 절차를 문서화합니다.
+`kakaotalk`은 macOS에서 KakaoTalk 일일 요약 자동화를 관리하는 스킬입니다. 안정적인 `chat_id`를 기준으로 선택한 채팅방을 요약하기 위해 필요한 Codex 스킬 지침, 대화 추출 스크립트, 요약 실행기, launchd 템플릿, runtime workspace 설치 스크립트를 포함합니다.
 
 ### 사용 방법
 
 다음 작업에 사용합니다.
 
+- `~/Library/Application Support/kakaotalk-summary` 아래에 사용자별 runtime workspace 만들기.
 - KakaoTalk 요약 대상 채팅방을 찾거나 등록하기.
 - 로컬 KakaoTalk 데이터베이스에서 정규화된 대화 또는 전체 대화 추출하기.
-- 일일 요약 워크플로우 실행 또는 dry-run 수행하기.
+- `agy`를 통한 일일 요약 워크플로우 실행 또는 dry-run 수행하기.
 - KakaoTalk 자동화의 요약 프롬프트나 launchd 스케줄 조정하기.
 
-이 스킬은 로컬 `kakao-cli` 프로젝트를 위한 워크플로우 가이드이며, 설치된 로컬 CLI와 설정 파일을 기준으로 사용해야 합니다.
+설치된 스킬 패키지는 의도적으로 머신별 상태를 포함하지 않습니다. `scripts/install_runtime_workspace.sh`로 runtime workspace를 만든 뒤, launchd를 활성화하기 전에 그 안의 `kakao_daily_summary.config.json`에 실제 `chat_id` 값을 등록해야 합니다.
 
 ### 주의 사항
 
-채팅방 이름은 오래되었거나 모호할 수 있으므로 config를 수정하기 전에 확인된 `chat_id`를 우선 사용해야 합니다. 이 워크플로우는 로컬 KakaoTalk 데이터를 읽고 사적인 대화 요약을 만들 수 있으므로, 공개 저장소에는 일반적인 자동화 절차만 게시하고 추출한 대화 내용, 인증 정보, 채팅 내용은 게시하지 않아야 합니다.
+채팅방 이름은 오래되었거나 모호할 수 있으므로 config를 수정하기 전에 확인된 `chat_id`를 우선 사용해야 합니다. 공개 스킬 패키지에는 private `kakao_daily_summary.config.json`, 추출한 대화, 생성된 요약, 인증 정보, 채팅 내용을 저장하지 않아야 합니다.
 
 ## kyobobook-inventory
 

@@ -8,22 +8,23 @@ Personal Codex skills maintained for repeatable engineering and research workflo
 
 ### Skill Introduction
 
-`kakaotalk` manages Jaewon's local KakaoTalk daily summary automation. It documents how to select chatrooms by durable `chat_id`, register summary targets, run transcript extraction, operate the Gemini summary path through `agy`, and maintain the launchd schedule.
+`kakaotalk` manages KakaoTalk daily summary automation on macOS. It packages the Codex skill instructions, transcript extraction scripts, summary runner, launchd templates, and runtime-workspace installer needed to summarize selected chatrooms by durable `chat_id`.
 
 ### Usage
 
 Use this skill when you need to:
 
+- Create a user-local runtime workspace under `~/Library/Application Support/kakaotalk-summary`.
 - Discover or register KakaoTalk chatrooms for automated summaries.
 - Extract normalized or full chat transcripts from the local KakaoTalk database.
-- Run or dry-run the daily summary workflow.
+- Run or dry-run the daily summary workflow through `agy`.
 - Adjust the summary prompt or launchd schedule for the KakaoTalk automation.
 
-The skill is a workflow guide for the local `kakao-cli` project and should be used with the installed local CLI and config files.
+The installed skill package intentionally excludes machine-local state. Use `scripts/install_runtime_workspace.sh` to create the runtime workspace, then edit `kakao_daily_summary.config.json` there with real `chat_id` values before enabling launchd.
 
 ### Cautions
 
-Chatroom names can be stale or ambiguous, so prefer confirmed `chat_id` values before editing config. The workflow reads local KakaoTalk data and may produce private conversation summaries; only publish general automation instructions, not extracted transcripts, credentials, or chat contents.
+Chatroom names can be stale or ambiguous, so prefer confirmed `chat_id` values before editing config. Do not store private `kakao_daily_summary.config.json`, extracted transcripts, generated summaries, credentials, or chat contents in the public skill package.
 
 ## kyobobook-inventory
 

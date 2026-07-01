@@ -1,36 +1,52 @@
 ---
 name: kakaotalk
-description: Use when managing Jaewon's KakaoTalk daily summary automation: choose or register chatrooms by chat_id, manage the launchd schedule, extract chat logs with the local CLI, run Gemini summaries through agy, or edit the summary prompt template.
+description: Use when managing KakaoTalk daily summary automation: register chatrooms by chat_id, extract chat logs, run AI summaries through agy, edit the summary prompt, or manage the macOS launchd schedule.
 metadata:
-  short-description: Manage KakaoTalk chat extraction and Gemini summary automation
+  short-description: Manage KakaoTalk chat extraction and daily summary automation
 ---
 
-# KakaoTalk
+# KakaoTalk Daily Summary
 
 ## Purpose
 
-Use this skill when the user asks to work on the local KakaoTalk summary automation in:
+Use this skill when the user wants to operate or modify a KakaoTalk daily summary workspace. Distinguish the installed Codex skill package from the runtime workspace:
 
-```text
-/Users/jaewone/developer/utils/kakao-cli
-```
+- `~/.codex/skills/kakaotalk` is the Codex skill package used for discovery, instructions, scripts, and templates.
+- The runtime workspace is the directory that contains the machine-local `kakao_daily_summary.config.json`, `history/`, and `logs/`. For a distributed install, use `~/Library/Application Support/kakaotalk-summary`.
+- launchd should point to the runtime workspace, not to `~/.codex/skills/kakaotalk`, unless that skill package directory is intentionally being used as the runtime workspace and has its own local config.
 
 The project uses:
 
 - `kakaocli` to read the local KakaoTalk database.
 - `scripts/extract_kakao_chat.py` to extract normalized or full chat transcripts by `chat_id`.
 - `scripts/kakao_daily_summary.py` to render `summary_prompt.md`, call `agy`, and save Markdown summaries.
-- `launchd/com.jaewone.kakao-daily-summary.plist` plus `scripts/run_daily_summary_if_needed.sh` for hourly launchd checks.
-- `kakao_daily_summary.config.json` as the source of truth for chatroom labels, `chat_id` mappings, output directories, model, timezone, and limit.
+- `kakao_daily_summary.config.json` as the local source of truth for chatroom labels, `chat_id` mappings, output directories, model, timezone, and limits.
+- `launchd/com.jaewone.kakao-daily-summary.plist` plus `scripts/run_daily_summary_if_needed.sh` for scheduled macOS runs.
 
 Prefer the local CLI and config over ad hoc SQL. Do not duplicate transcript-cleaning logic in new scripts unless the user explicitly asks for a new implementation.
 
-## Initial Orientation
+The installed skill directory must include this full package, not only `SKILL.md`, because the instructions intentionally reference bundled scripts and templates by relative path. Use `scripts/install_codex_skill.sh` from the source repo to sync `~/.codex/skills/kakaotalk`. The installer excludes `kakao_daily_summary.config.json`, `history/`, and `logs/`, so the installed skill package is not the scheduled runtime root.
 
-Start from the project root:
+Do not store user-specific `kakao_daily_summary.config.json` inside `~/.codex/skills/kakaotalk` for normal distribution. Skill installs and updates may replace that directory. Put private config in the runtime workspace instead.
+
+## Orientation
+
+For a distributed install, create the runtime workspace from the installed skill package:
 
 ```bash
-cd /Users/jaewone/developer/utils/kakao-cli
+~/.codex/skills/kakaotalk/scripts/install_runtime_workspace.sh
+```
+
+Then edit:
+
+```text
+~/Library/Application Support/kakaotalk-summary/kakao_daily_summary.config.json
+```
+
+When operating an existing automation, start from the runtime workspace:
+
+```bash
+cd "$HOME/Library/Application Support/kakaotalk-summary"
 ```
 
 Before changing behavior, inspect the current state:
@@ -42,7 +58,26 @@ python3 -m json.tool kakao_daily_summary.config.json >/dev/null
 python3 -m py_compile scripts/kakao_chat_core.py scripts/extract_kakao_chat.py scripts/kakao_daily_summary.py
 ```
 
-If `kakaocli auth` fails because the DB cannot be decrypted, stop and resolve auth first. Do not guess a user id. Use the repo README recovery notes and the local helper scripts only when the user asks to repair auth.
+If `kakaocli auth` fails because the DB cannot be decrypted, stop and resolve auth first. Do not guess a user id. Use the README recovery notes and local helper scripts only when the user asks to repair auth.
+
+## Portable Configuration
+
+For a new runtime workspace, copy or edit the example config and register real chatrooms:
+
+```bash
+cp kakao_daily_summary.config.example.json kakao_daily_summary.config.json
+```
+
+Use portable path values in config:
+
+```json
+{
+  "history_dir": "history",
+  "display_dir": "~/Desktop/kakao open chat"
+}
+```
+
+`history_dir` may be relative to the config file. `display_dir` may use `~`, which expands to the current user's home directory, equivalent to `/Users/<user>/Desktop/kakao open chat` on macOS.
 
 ## Chatroom Selection
 
@@ -51,63 +86,46 @@ Selecting a chatroom has two phases:
 1. Infer or discover the intended `chat_id` from the user's title or description.
 2. Register that exact `chat_id` in `kakao_daily_summary.config.json`.
 
-### Phase 1: Infer Or Discover `chat_id`
-
 Always prefer exact `chat_id` once known. Chatroom display names can be `(unknown)`, incomplete, stale, or different from the user's natural-language name.
 
-The summary runner has no default chatroom fallback. It uses `active_chat`, or a `--chat-id` that is already registered in `kakao_daily_summary.config.json`. The display name must come from that config entry.
-
-Use this progression:
-
-1. For discovery only, try exact or substring name lookup through `kakaocli`:
+For discovery only, try exact or substring name lookup through `kakaocli`:
 
 ```bash
 kakaocli messages --chat "<user provided chat title>" --since 7d --limit 5 --json
 kakaocli chats --json --limit 10000 | rg -n "<distinct keyword>"
 ```
 
-2. If name lookup fails, split the user title into distinctive tokens or member names and search messages:
+If name lookup fails, split the user title into distinctive tokens or member names and search messages:
 
 ```bash
 kakaocli search "<keyword-1>" --json --limit 20
 kakaocli search "<keyword-2>" --json --limit 20
 ```
 
-3. Compare candidate `chat_id` values from search results. Favor a candidate when:
+Compare candidate `chat_id` values from search results. Favor a candidate when multiple keywords point to the same `chat_id`, sample messages match the described room, or direct extraction shows plausible conversation content.
 
-- multiple keywords point to the same `chat_id`;
-- message `sender` values or mentions match the people the user named;
-- recent sample messages match the user's described room;
-- extracting a small sample by `chat_id` shows plausible conversation content.
-
-4. Verify the candidate directly:
+Verify the candidate directly:
 
 ```bash
 scripts/extract_kakao_chat.py <chat_id> --start-date YYYY-MM-DD --limit 20
 ```
 
-If there are multiple plausible candidates, report the candidates and ask the user to choose. Do not register a chatroom when the evidence is ambiguous.
+If multiple candidates remain plausible, report the candidates and ask the user to choose. Do not register a chatroom when the evidence is ambiguous.
 
-### Phase 2: Register The Chatroom
-
-Update `kakao_daily_summary.config.json` under `chats`:
+Register the chatroom under `chats`:
 
 ```json
 {
-  "active_chat": "nekara-study",
-  "history_dir": "/Users/jaewone/developer/utils/kakao-cli/history",
-  "display_dir": "/Users/jaewone/Desktop/kakao open chat",
+  "active_chat": "example-room",
   "chats": {
-    "nekara-study": {
-      "name": "네카라쿠배 개발자랑 함께 공부하자!",
-      "chat_id": 18472038831524877,
+    "example-room": {
+      "name": "Example KakaoTalk Room",
+      "chat_id": 1234567890,
       "enabled": true
     }
   }
 }
 ```
-
-Use a stable slug key such as `nekara-study`, `family`, or `ichanghyun-taeho`. The `name` field is for humans. The `chat_id` field is the durable lookup key used by automation. Keep disabled chats in the file when useful because this config also documents what each `chat_id` means.
 
 Validate after editing:
 
@@ -148,7 +166,7 @@ Important extractor behavior:
 - Without `--save-path`, output goes to stdout.
 - If `--save-path` is a directory, the filename is generated from the chatroom name and current datetime.
 
-Use the summary CLI when the user wants the full Gemini path. `--chat-id` may be used only for a chat already registered in `kakao_daily_summary.config.json`; otherwise the configured `active_chat` is used:
+Use the summary CLI when the user wants the full AI summary path. `--chat-id` may be used only for a chat already registered in `kakao_daily_summary.config.json`; otherwise the configured `active_chat` is used:
 
 ```bash
 scripts/kakao_daily_summary.py --force
@@ -160,10 +178,10 @@ Successful summaries write:
 
 ```text
 history/<chat_id>_<YYYYMMDD>.md
-/Users/jaewone/Desktop/kakao open chat/<chatroom_name>.md
+~/Desktop/kakao open chat/<chatroom_name>.md
 ```
 
-The `history` file is durable. The Desktop folder is a latest-readable snapshot and may be cleared by launchd before new results are written.
+The history file is durable. The Desktop folder is a latest-readable snapshot and may be cleared by launchd before new results are written.
 
 ## launchd Schedule Management
 
@@ -175,49 +193,43 @@ scripts/install_launch_agent.sh
 scripts/run_daily_summary_if_needed.sh
 ```
 
-The wrapper checks `~/.kakao_daily_summary/last_run` and exits silently when today's summary already ran. It calls `scripts/kakao_daily_summary.py --config kakao_daily_summary.config.json --reset-display-dir` only when a new daily result should be produced. Do not reintroduce `Already ran today` stdout/stderr logging in the launchd wrapper.
-
-When the summary actually runs, wrapper output is metadata-prefixed before launchd writes it to `logs/`:
-
-```text
-[YYYY-MM-DDTHH:MM:SS+0900] level=INFO component=kakao-daily-summary pid=<pid> <message>
-```
-
-### Register Or Reinstall
-
-After editing the plist or wrapper:
+The plist in the runtime workspace is a template. Run the installer from the runtime workspace, not from a config-less skill package, to replace `__ROOT__` and `__PATH__` with the current machine's paths:
 
 ```bash
 scripts/install_launch_agent.sh
 launchctl print "gui/$(id -u)/com.jaewone.kakao-daily-summary"
 ```
 
-Verify the effective interval, last exit status, and program arguments.
+For a first distributed install:
 
-### Modify Schedule
+```bash
+~/.codex/skills/kakaotalk/scripts/install_runtime_workspace.sh
+open "$HOME/Library/Application Support/kakaotalk-summary/kakao_daily_summary.config.json"
+"$HOME/Library/Application Support/kakaotalk-summary/scripts/install_launch_agent.sh"
+```
 
-Edit `launchd/com.jaewone.kakao-daily-summary.plist`. Common keys:
+The wrapper checks `~/.kakao_daily_summary/last_run` and exits silently when today's summary already ran. It calls:
 
-- `RunAtLoad`: run once when the agent loads.
-- `StartInterval`: repeat interval in seconds. For example, `3600` is hourly.
-- `StandardOutPath` and `StandardErrorPath`: log paths under the project `logs/` directory.
+```bash
+scripts/kakao_daily_summary.py --config kakao_daily_summary.config.json --all-enabled --reset-display-dir
+```
 
-Then reinstall with `scripts/install_launch_agent.sh` and verify with `launchctl print`.
+only when a new daily result should be produced.
 
-### Delete Or Disable
+To change the schedule, edit `StartInterval` in `launchd/com.jaewone.kakao-daily-summary.plist`, reinstall, and verify with `launchctl print`.
 
-When the user asks to remove the automation:
+To remove the LaunchAgent:
 
 ```bash
 launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.jaewone.kakao-daily-summary.plist" 2>/dev/null || true
 rm -f "$HOME/Library/LaunchAgents/com.jaewone.kakao-daily-summary.plist"
 ```
 
-Do not delete `history/`, `kakao_daily_summary.config.json`, or `summary_prompt.md` unless the user explicitly asks.
+Do not delete `history/`, `kakao_daily_summary.config.json`, or `summary_prompt.md` unless explicitly requested.
 
 ## Prompt Editing
 
-The Gemini prompt template is:
+The prompt template is:
 
 ```text
 summary_prompt.md
@@ -236,39 +248,14 @@ When editing the prompt:
 3. Prefer direct Markdown instructions over vague style guidance.
 4. After editing, run a dry-run or render smoke test before calling `agy`.
 
-Useful checks:
-
-```bash
-scripts/kakao_daily_summary.py --date YYYY-MM-DD --dry-run --limit 20
-python3 -m py_compile scripts/kakao_daily_summary.py
-```
-
-## Gemini / agy Behavior
-
-The summary script does not upload a file to Gemini. It builds a prompt string and passes it to `agy` through stdin:
-
-```bash
-printf '%s' "$PROMPT" | agy --model "Gemini 3.5 Flash (High)" -p "" --print-timeout 10m
-```
-
-`agy --model` is optional in the installed CLI. When running an end-to-end summary, first try the configured model. If the command fails and the stderr/stdout indicates a model selection problem, such as an unknown model, invalid model, unsupported model, unavailable model, or model flag parsing issue, retry once without the model argument:
-
-```bash
-printf '%s' "$PROMPT" | agy -p "" --print-timeout 10m
-```
-
-Treat this fallback as specific to model-related failures only. Do not retry without `--model` for auth failures, `kakaocli` failures, prompt/template errors, timeout issues, or empty transcript problems unless the user explicitly asks.
-
-The transcript sent to Gemini is normalized, not `--full`. `--full` is only for manual extraction with `scripts/extract_kakao_chat.py`.
-
-## Verification Checklist
+## Verification
 
 After meaningful changes, run the smallest relevant checks:
 
 ```bash
 python3 -m json.tool kakao_daily_summary.config.json >/dev/null
+python3 -m json.tool kakao_daily_summary.config.example.json >/dev/null
 python3 -m py_compile scripts/kakao_chat_core.py scripts/extract_kakao_chat.py scripts/kakao_daily_summary.py
-scripts/extract_kakao_chat.py <chat_id> --start-date YYYY-MM-DD --limit 5
 scripts/kakao_daily_summary.py --date YYYY-MM-DD --dry-run --limit 5
 ```
 
@@ -282,7 +269,7 @@ Confirm both output paths are written:
 
 ```bash
 ls -l history/<chat_id>_<YYYYMMDD>.md
-ls -l "/Users/jaewone/Desktop/kakao open chat"
+ls -l "$HOME/Desktop/kakao open chat"
 ```
 
 ## Reporting Guidance

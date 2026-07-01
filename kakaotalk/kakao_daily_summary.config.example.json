@@ -1,0 +1,15 @@
+{
+  "active_chat": "example-room",
+  "history_dir": "history",
+  "display_dir": "~/Desktop/kakao open chat",
+  "timezone": "Asia/Seoul",
+  "model": "Gemini 3.5 Flash (High)",
+  "limit": 10000,
+  "chats": {
+    "example-room": {
+      "name": "Example KakaoTalk Room",
+      "chat_id": 1234567890,
+      "enabled": true
+    }
+  }
+}
