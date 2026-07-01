@@ -4,6 +4,27 @@
 
 Personal Codex skills maintained for repeatable engineering and research workflows.
 
+## kakaotalk
+
+### Skill Introduction
+
+`kakaotalk` manages Jaewon's local KakaoTalk daily summary automation. It documents how to select chatrooms by durable `chat_id`, register summary targets, run transcript extraction, operate the Gemini summary path through `agy`, and maintain the launchd schedule.
+
+### Usage
+
+Use this skill when you need to:
+
+- Discover or register KakaoTalk chatrooms for automated summaries.
+- Extract normalized or full chat transcripts from the local KakaoTalk database.
+- Run or dry-run the daily summary workflow.
+- Adjust the summary prompt or launchd schedule for the KakaoTalk automation.
+
+The skill is a workflow guide for the local `kakao-cli` project and should be used with the installed local CLI and config files.
+
+### Cautions
+
+Chatroom names can be stale or ambiguous, so prefer confirmed `chat_id` values before editing config. The workflow reads local KakaoTalk data and may produce private conversation summaries; only publish general automation instructions, not extracted transcripts, credentials, or chat contents.
+
 ## kyobobook-inventory
 
 ### Skill Introduction
