@@ -9,14 +9,22 @@ metadata:
 
 ## Purpose
 
-Use this skill when the user wants to operate or modify a KakaoTalk daily summary workspace. Distinguish the installed Codex skill package from the runtime workspace:
+Use this macOS-only skill when the user wants to operate or modify a KakaoTalk daily summary workspace. Distinguish the installed Codex skill package from the runtime workspace:
 
 - `~/.codex/skills/kakaotalk` is the Codex skill package used for discovery, instructions, scripts, and templates.
 - The runtime workspace is the directory that contains the machine-local `kakao_daily_summary.config.json`, `history/`, and `logs/`. For a distributed install, use `~/Library/Application Support/kakaotalk-summary`.
 - launchd should point to the runtime workspace, not to `~/.codex/skills/kakaotalk`, unless that skill package directory is intentionally being used as the runtime workspace and has its own local config.
 
+The project depends on Antigravity2 (`agy`) and `kakaocli`:
+
+- Antigravity2 is installed with `curl -fsSL https://antigravity.google/cli/install.sh | bash`; see <https://antigravity.google/docs/cli/install>.
+- `kakaocli` is installed with `brew install silver-flight-group/tap/kakaocli`; see <https://github.com/silver-flight-group/kakaocli#%EA%B0%9C%EC%9A%94>.
+- `agy` must be logged in by running `agy` and following its login prompt.
+- `kakaocli` auth is checked with `kakaocli auth`; when it fails and local `clang` is available, `scripts/check_auth.py` can infer `KAKAO_USER_ID` from KakaoTalk preference plist SHA-512 revision keys. If inference fails or `clang` is unavailable, the user must run `kakaocli auth --user-id <KAKAO_USER_ID>`.
+
 The project uses:
 
+- `scripts/check_auth.py` to verify macOS dependencies/auth and update successful auth timestamps in `auth_status.agy_checked_at` / `auth_status.kakaocli_checked_at`.
 - `kakaocli` to read the local KakaoTalk database.
 - `scripts/extract_kakao_chat.py` to extract normalized or full chat transcripts by `chat_id`.
 - `scripts/kakao_daily_summary.py` to render `summary_prompt.md`, call `agy`, and save Markdown summaries.
@@ -49,13 +57,20 @@ When operating an existing automation, start from the runtime workspace:
 cd "$HOME/Library/Application Support/kakaotalk-summary"
 ```
 
-Before changing behavior, inspect the current state:
+Whenever this skill is loaded for real work, check authentication before proceeding:
 
 ```bash
-kakaocli auth
-kakaocli login --status
+scripts/check_auth.py --config kakao_daily_summary.config.json
+```
+
+Authentication checks are cached for 5 hours. If the previous check is still fresh, real extraction/summary commands skip preflight and only force a new check after an actual `kakaocli` or `agy` error.
+
+For read-only code/document edits in the installed skill package, this live auth check may be skipped when it is unrelated to the requested change. Before changing runtime behavior, inspect the current state:
+
+```bash
+scripts/check_auth.py --config kakao_daily_summary.config.json
 python3 -m json.tool kakao_daily_summary.config.json >/dev/null
-python3 -m py_compile scripts/kakao_chat_core.py scripts/extract_kakao_chat.py scripts/kakao_daily_summary.py
+python3 -m py_compile scripts/check_auth.py scripts/kakao_chat_core.py scripts/extract_kakao_chat.py scripts/kakao_daily_summary.py
 ```
 
 If `kakaocli auth` fails because the DB cannot be decrypted, stop and resolve auth first. Do not guess a user id. Use the README recovery notes and local helper scripts only when the user asks to repair auth.
@@ -72,6 +87,11 @@ Use portable path values in config:
 
 ```json
 {
+  "auth_status": {
+    "agy_checked_at": null,
+    "kakaocli_checked_at": null
+  },
+  "kakaocli_user_id": null,
   "history_dir": "history",
   "display_dir": "~/Desktop/kakao open chat"
 }
@@ -102,6 +122,13 @@ kakaocli search "<keyword-1>" --json --limit 20
 kakaocli search "<keyword-2>" --json --limit 20
 ```
 
+If no plausible chatroom is found after direct name lookup, chat list filtering, and keyword/message search, stop and tell the user that the chatroom could not be found. Ask the user to provide either:
+
+- a recent topic discussed in that room; or
+- a specific message, phrase, link, file name, or participant clue that can be searched.
+
+Then use that user-provided clue as the next discovery basis. Do not continue by guessing from weakly related rooms, and do not register a chatroom when there is no concrete `kakaocli` evidence.
+
 Compare candidate `chat_id` values from search results. Favor a candidate when multiple keywords point to the same `chat_id`, sample messages match the described room, or direct extraction shows plausible conversation content.
 
 Verify the candidate directly:
@@ -112,7 +139,15 @@ scripts/extract_kakao_chat.py <chat_id> --start-date YYYY-MM-DD --limit 20
 
 If multiple candidates remain plausible, report the candidates and ask the user to choose. Do not register a chatroom when the evidence is ambiguous.
 
-Register the chatroom under `chats`:
+### Registration and Scheduled Runs
+
+Registering a chatroom in `kakao_daily_summary.config.json` is not always the same as adding it to scheduled summaries. The launchd wrapper runs `scripts/kakao_daily_summary.py --all-enabled --reset-display-dir`, so any chat with `"enabled": true` is included in the recurring job.
+
+Set `"enabled": true` only when the user explicitly asks to add the chatroom to recurring summaries, scheduled summaries, the hourly/daily automation, launchd processing, or other repeated work.
+
+When the user only asks a one-off question, summary, extraction, inspection, or test for a chatroom, register the discovered chatroom with `"enabled": false` if registration is needed for command compatibility. In that case, answer the user's request and add a final sentence asking whether they want this chatroom added to recurring summaries.
+
+Register a recurring chatroom under `chats`:
 
 ```json
 {
@@ -127,16 +162,34 @@ Register the chatroom under `chats`:
 }
 ```
 
+Register a one-off/test-only chatroom under `chats`:
+
+```json
+{
+  "active_chat": "example-room",
+  "chats": {
+    "example-room": {
+      "name": "Example KakaoTalk Room",
+      "chat_id": 1234567890,
+      "enabled": false
+    }
+  }
+}
+```
+
 Validate after editing:
 
 ```bash
 python3 -m json.tool kakao_daily_summary.config.json >/dev/null
+scripts/check_auth.py --config kakao_daily_summary.config.json
 scripts/kakao_daily_summary.py --date YYYY-MM-DD --dry-run --limit 20
 ```
 
 ## CLI Usage
 
 Use the extractor when the user asks to fetch raw conversation data, inspect a chatroom, create test logs, compare normalized versus full output, or provide data for prompt tuning.
+
+When the user asks to "summarize", "organize", "요약", "정리", or uses similar wording for chat content, do not manually summarize the transcript in the assistant response. Extract the relevant transcript and call Antigravity2 (`agy`) for the actual summarization/organization. Use `scripts/kakao_daily_summary.py` when the request matches its supported daily summary flow. For custom ranges or one-off transcript summaries that do not fit the daily summary CLI, pipe a rendered prompt and the extracted transcript to `agy` directly, then answer from the `agy` output while reporting the transcript path and `chat_id` used.
 
 Normalized transcript:
 
@@ -255,7 +308,8 @@ After meaningful changes, run the smallest relevant checks:
 ```bash
 python3 -m json.tool kakao_daily_summary.config.json >/dev/null
 python3 -m json.tool kakao_daily_summary.config.example.json >/dev/null
-python3 -m py_compile scripts/kakao_chat_core.py scripts/extract_kakao_chat.py scripts/kakao_daily_summary.py
+python3 -m py_compile scripts/check_auth.py scripts/kakao_chat_core.py scripts/extract_kakao_chat.py scripts/kakao_daily_summary.py
+scripts/check_auth.py --config kakao_daily_summary.config.json
 scripts/kakao_daily_summary.py --date YYYY-MM-DD --dry-run --limit 5
 ```
 
@@ -278,8 +332,11 @@ For Korean user requests, answer in Korean. Mention:
 
 - which `chat_id` was used or registered;
 - which config or prompt file changed;
+- whether the chatroom was registered with `enabled: true` or `enabled: false`;
 - whether launchd was reinstalled or only edited;
 - exact output paths created during tests;
 - tests run and any remaining risk.
+
+If the chatroom was registered only for a one-off question, summary, extraction, inspection, or test, and the user did not explicitly ask for recurring automation, end the answer by asking whether to add the chatroom to recurring summaries. Do this even when the launchd schedule already exists, because `enabled: true` controls inclusion in the recurring job.
 
 If chatroom discovery required inference, clearly distinguish observed `kakaocli` evidence from LLM judgment.

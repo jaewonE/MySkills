@@ -60,23 +60,29 @@ def derive_secure_key(user_id, uuid):
     return pbkdf2(hawawa[::-1], salt)
 
 
-def kakaocli_base_args(args):
-    base = ["kakaocli", "messages", "--since", args.since, "--limit", str(args.limit), "--json"]
-    if not args.chat_id:
-        raise RuntimeError("chat_id is required for KakaoTalk message extraction")
-    base.extend(["--chat-id", str(args.chat_id)])
-    if args.db:
-        base.extend(["--db", args.db])
-    if args.key:
-        base.extend(["--key", args.key])
+def kakaocli_database_args(db=None, key=None, user_id=None):
+    base = []
+    if db:
+        base.extend(["--db", str(db)])
+    if key:
+        base.extend(["--key", str(key)])
 
-    user_id = args.user_id or os.environ.get("KAKAOCLI_USER_ID")
-    if user_id and not args.key:
+    user_id = user_id or os.environ.get("KAKAOCLI_USER_ID")
+    if user_id and not key:
         uuid = platform_uuid()
         db_name = derive_db_name(int(user_id), uuid)
         db_path = KAKAO_CONTAINER / db_name
         base.extend(["--db", str(db_path), "--key", derive_secure_key(int(user_id), uuid)])
 
+    return base
+
+
+def kakaocli_base_args(args):
+    base = ["kakaocli", "messages", "--since", args.since, "--limit", str(args.limit), "--json"]
+    if not args.chat_id:
+        raise RuntimeError("chat_id is required for KakaoTalk message extraction")
+    base.extend(["--chat-id", str(args.chat_id)])
+    base.extend(kakaocli_database_args(db=args.db, key=args.key, user_id=args.user_id))
     return base
 
 
@@ -132,7 +138,7 @@ def json_feed_should_skip(text):
         return False
     if data.get("hidden") is True:
         return True
-    return "members" in data
+    return "members" in data or "member" in data
 
 
 def display_text(text):

@@ -1,6 +1,6 @@
 # Agent Guide
 
-This repository manages Jaewon's local KakaoTalk daily summary automation. Use this guide when editing the project, operating the launchd job, registering chatrooms, extracting transcripts, or changing the Gemini prompt.
+This macOS-only repository manages Jaewon's local KakaoTalk daily summary automation. Use this guide when editing the project, operating the launchd job, registering chatrooms, extracting transcripts, or changing the Gemini prompt.
 
 ## Working Directory
 
@@ -19,6 +19,7 @@ Core files:
 - `scripts/kakao_chat_core.py`: shared extraction, filtering, and transcript normalization logic.
 - `scripts/extract_kakao_chat.py`: CLI for chat transcript extraction by `chat_id`.
 - `scripts/kakao_daily_summary.py`: CLI for full Gemini summary generation.
+- `scripts/check_auth.py`: macOS dependency and auth preflight.
 - `scripts/run_daily_summary_if_needed.sh`: lightweight daily guard used by launchd.
 - `scripts/install_launch_agent.sh`: installs/reloads the LaunchAgent.
 - `scripts/install_runtime_workspace.sh`: creates a user-local runtime workspace outside the Codex skill package.
@@ -43,6 +44,8 @@ Keep `README.md`, this agent guide, and the root `SKILL.md` aligned when workflo
 
 ## Operating Principles
 
+- This skill depends on Antigravity2 (`agy`) and `kakaocli`; run `scripts/check_auth.py --config kakao_daily_summary.config.json` from the runtime workspace before real extraction or summary work.
+- The preflight updates only `auth_status.agy_checked_at` and `auth_status.kakaocli_checked_at` in the private runtime config. Timestamps are written only after successful checks; failures set the matching timestamp to `null`. Successful timestamps are reused for 5 hours; within that window, commands should force a fresh check only after a real `kakaocli` or `agy` error. If `kakaocli auth` fails and `clang` is installed, it attempts `KAKAO_USER_ID` recovery from KakaoTalk preference plist SHA-512 revision keys.
 - Prefer `chat_id` over chatroom display names. Display names can be missing, stale, or `(unknown)`.
 - The summary runner has no default chatroom fallback. It uses `active_chat`, or a `--chat-id` that is already registered in `kakao_daily_summary.config.json`.
 - Keep transcript extraction logic centralized in `scripts/kakao_chat_core.py`.
@@ -106,6 +109,7 @@ Validate:
 
 ```bash
 python3 -m json.tool kakao_daily_summary.config.json >/dev/null
+scripts/check_auth.py --config kakao_daily_summary.config.json
 scripts/kakao_daily_summary.py --date YYYY-MM-DD --dry-run --limit 20
 ```
 
@@ -160,7 +164,7 @@ Current rules:
 - Reduce `ㅋ` repeated 3 or more times to `ㅋㅋㅋ`.
 - Convert exact `모두에게 삭제` to `[삭제된 메세지]`.
 - Remove JSON feed messages with `feedType` and `hidden: true`.
-- Remove JSON feed messages with `feedType` and `members`.
+- Remove JSON feed messages with `feedType` and `members` or `member`.
 
 If these rules change, update:
 
@@ -290,9 +294,9 @@ rm -f "$HOME/Library/LaunchAgents/com.jaewone.kakao-daily-summary.plist"
 Start with:
 
 ```bash
+scripts/check_auth.py --config kakao_daily_summary.config.json
+agy -p "Reply exactly: PONG"
 kakaocli auth
-kakaocli login --status
-kakaocli status
 ```
 
 If `kakaocli auth` fails because the DB cannot be decrypted, do not guess the user id. Use the README recovery notes and helper scripts only when the user asks to repair auth.
@@ -313,7 +317,8 @@ Run these after edits:
 
 ```bash
 python3 -m json.tool kakao_daily_summary.config.json >/dev/null
-python3 -m py_compile scripts/kakao_chat_core.py scripts/extract_kakao_chat.py scripts/kakao_daily_summary.py
+python3 -m json.tool kakao_daily_summary.config.example.json >/dev/null
+python3 -m py_compile scripts/check_auth.py scripts/kakao_chat_core.py scripts/extract_kakao_chat.py scripts/kakao_daily_summary.py
 ```
 
 For CLI behavior:

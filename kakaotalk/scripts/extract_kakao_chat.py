@@ -11,9 +11,11 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import kakao_chat_core as core
+import check_auth
 
 
 DEFAULT_TIMEZONE = "Asia/Seoul"
+DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "kakao_daily_summary.config.json"
 FETCH_LIMIT = 1_000_000
 
 
@@ -50,8 +52,10 @@ def since_for_start(start, now):
     return f"{days}d"
 
 
-def load_chat_name(chat_id, timeout):
-    proc = core.run(["kakaocli", "chats", "--json", "--limit", "10000"], timeout=timeout)
+def load_chat_name(chat_id, timeout, db=None, key=None, user_id=None):
+    cmd = ["kakaocli", "chats", "--json", "--limit", "10000"]
+    cmd.extend(core.kakaocli_database_args(db=db, key=key, user_id=user_id))
+    proc = core.run(cmd, timeout=timeout)
     if proc.returncode != 0:
         return None
     try:
@@ -111,6 +115,42 @@ def load_range(
     return core.filter_messages(raw_messages, start, end)
 
 
+def load_range_with_auth_retry(args, start, end, since, config):
+    try:
+        return load_range(
+            args.chat_id,
+            start,
+            end,
+            since,
+            FETCH_LIMIT,
+            args.kakaocli_timeout,
+            db=args.db,
+            key=args.key,
+            user_id=args.user_id,
+        )
+    except Exception:
+        check_auth.ensure_auth(
+            args.config,
+            config,
+            require_agy=False,
+            require_kakaocli=True,
+            kakaocli_timeout=args.kakaocli_timeout,
+            force_auth_check=True,
+        )
+        args.user_id = args.user_id or check_auth.config_kakaocli_user_id(config)
+        return load_range(
+            args.chat_id,
+            start,
+            end,
+            since,
+            FETCH_LIMIT,
+            args.kakaocli_timeout,
+            db=args.db,
+            key=args.key,
+            user_id=args.user_id,
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Extract KakaoTalk chat messages by chat_id.")
     parser.add_argument("chat_id", type=int, help="Required KakaoTalk chat_id.")
@@ -120,22 +160,37 @@ def main():
     parser.add_argument("--full", action="store_true", help="Print/save unnormalized original transcript format.")
     parser.add_argument("--save-path", help="Output file path or directory. If omitted, prints to stdout.")
     parser.add_argument("--timezone", default=DEFAULT_TIMEZONE)
+    parser.add_argument("--config", type=Path, default=Path(os.environ.get("KAKAO_SUMMARY_CONFIG", DEFAULT_CONFIG)))
+    parser.add_argument("--db", default=os.environ.get("KAKAOCLI_DB"))
+    parser.add_argument("--key", default=os.environ.get("KAKAOCLI_DB_KEY"))
+    parser.add_argument("--user-id", default=os.environ.get("KAKAOCLI_USER_ID"))
     parser.add_argument("--kakaocli-timeout", type=int, default=180)
     args = parser.parse_args()
 
     if args.limit < 0:
         raise RuntimeError("--limit must be 0 or an integer greater than or equal to 1")
 
+    args.config = args.config.expanduser()
+    config = check_auth.load_config(args.config)
+    check_auth.ensure_auth(
+        args.config,
+        config,
+        require_agy=False,
+        require_kakaocli=True,
+        kakaocli_timeout=args.kakaocli_timeout,
+    )
+    args.user_id = args.user_id or check_auth.config_kakaocli_user_id(config)
+
     start, end, now = date_window(args.start_date, args.end_date, args.timezone)
     since = since_for_start(start, now)
-    filtered = load_range(args.chat_id, start, end, since, FETCH_LIMIT, args.kakaocli_timeout)
+    filtered = load_range_with_auth_retry(args, start, end, since, config)
     if args.limit > 0:
         filtered = filtered[: args.limit]
 
     output = core.full_transcript(filtered) if args.full else core.transcript(filtered)
     path = resolve_output_path(
         args.save_path,
-        load_chat_name(args.chat_id, args.kakaocli_timeout) or f"chat_{args.chat_id}",
+        load_chat_name(args.chat_id, args.kakaocli_timeout, db=args.db, key=args.key, user_id=args.user_id) or f"chat_{args.chat_id}",
         now,
     )
     if path:

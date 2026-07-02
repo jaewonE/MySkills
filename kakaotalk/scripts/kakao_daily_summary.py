@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 import kakao_chat_core as chat_core
 import extract_kakao_chat as chat_extract
+import check_auth
 
 
 DEFAULT_HISTORY_DIR = Path(__file__).resolve().parents[1] / "history"
@@ -242,21 +243,60 @@ def mark_ran_today(state_file):
     state_file.write_text(today + "\n", encoding="utf-8")
 
 
+def force_auth_check(args, *, require_agy, require_kakaocli):
+    check_auth.ensure_auth(
+        args.config,
+        args.config_data,
+        require_agy=require_agy,
+        require_kakaocli=require_kakaocli,
+        agy_timeout=min(parse_timeout_seconds(args.agy_timeout), 120),
+        kakaocli_timeout=args.kakaocli_timeout,
+        force_auth_check=True,
+    )
+    args.user_id = first_value(args.user_id, check_auth.config_kakaocli_user_id(args.config_data))
+
+
+def load_messages_with_auth_retry(chat_id, start, end, since, args):
+    try:
+        return chat_extract.load_range(
+            chat_id,
+            start,
+            end,
+            since,
+            chat_extract.FETCH_LIMIT,
+            args.kakaocli_timeout,
+            db=args.db,
+            key=args.key,
+            user_id=args.user_id,
+        )
+    except Exception:
+        force_auth_check(args, require_agy=False, require_kakaocli=True)
+        return chat_extract.load_range(
+            chat_id,
+            start,
+            end,
+            since,
+            chat_extract.FETCH_LIMIT,
+            args.kakaocli_timeout,
+            db=args.db,
+            key=args.key,
+            user_id=args.user_id,
+        )
+
+
+def ask_agy_with_auth_retry(prompt, args):
+    try:
+        return ask_agy(prompt, args)
+    except Exception:
+        force_auth_check(args, require_agy=True, require_kakaocli=False)
+        return ask_agy(prompt, args)
+
+
 def summarize_chat(chat_config, args, day, start, end):
     chat_name = chat_config["name"]
     chat_id = chat_config["chat_id"]
     since = chat_extract.since_for_start(start, datetime.now(ZoneInfo(args.timezone)))
-    messages = chat_extract.load_range(
-        chat_id,
-        start,
-        end,
-        since,
-        chat_extract.FETCH_LIMIT,
-        args.kakaocli_timeout,
-        db=args.db,
-        key=args.key,
-        user_id=args.user_id,
-    )
+    messages = load_messages_with_auth_retry(chat_id, start, end, since, args)
     if args.limit > 0:
         messages = messages[: args.limit]
 
@@ -267,7 +307,7 @@ def summarize_chat(chat_config, args, day, start, end):
         return []
 
     if messages:
-        summary = ask_agy(build_prompt(chat_name, day, messages, args.prompt_template), args)
+        summary = ask_agy_with_auth_retry(build_prompt(chat_name, day, messages, args.prompt_template), args)
     else:
         summary = f"# {chat_name} 카카오톡 요약 - {day.isoformat()}\n\n어제 하루 동안 요약할 텍스트 메시지가 없습니다."
 
@@ -303,6 +343,7 @@ def main():
 
     args.config = args.config.expanduser()
     config = load_config(args.config)
+    args.config_data = config
     config_dir = args.config.resolve().parent if args.config.exists() else Path.cwd()
     if args.all_enabled and args.chat_id is not None:
         raise RuntimeError("--all-enabled cannot be combined with --chat-id")
@@ -313,6 +354,15 @@ def main():
     args.timezone = first_value(args.timezone, os.environ.get("KAKAO_SUMMARY_TIMEZONE"), config.get("timezone"), DEFAULT_TIMEZONE)
     args.model = first_value(args.model, os.environ.get("AGY_MODEL"), config.get("model"), DEFAULT_MODEL)
     args.limit = int(first_value(args.limit, os.environ.get("KAKAO_SUMMARY_LIMIT"), config.get("limit"), 10000))
+    check_auth.ensure_auth(
+        args.config,
+        config,
+        require_agy=not args.dry_run,
+        require_kakaocli=True,
+        agy_timeout=min(parse_timeout_seconds(args.agy_timeout), 120),
+        kakaocli_timeout=args.kakaocli_timeout,
+    )
+    args.user_id = first_value(args.user_id, check_auth.config_kakaocli_user_id(config))
 
     state_file = Path.home() / ".kakao_daily_summary" / "last_run"
     if not args.date and should_skip_today(state_file, args.force):

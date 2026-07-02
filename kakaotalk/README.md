@@ -4,6 +4,75 @@ Automate KakaoTalk chat extraction and daily Gemini summaries on macOS.
 
 The current project reads KakaoTalk messages through `kakaocli`, normalizes the transcript, renders `summary_prompt.md`, calls Gemini through `agy`, and saves Markdown summaries to both a permanent history folder and a Desktop snapshot folder.
 
+## Platform and Prerequisites
+
+This is a macOS-only Codex skill. It depends on two external CLIs:
+
+- Antigravity2, which provides `agy` for Gemini calls.
+- `kakaocli`, which reads the local KakaoTalk database.
+
+Install Antigravity2:
+
+```bash
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+```
+
+See the Antigravity2 CLI install documentation: [https://antigravity.google/docs/cli/install](https://antigravity.google/docs/cli/install)
+
+Install `kakaocli`:
+
+```bash
+brew install silver-flight-group/tap/kakaocli
+```
+
+See the `kakaocli` project page: [https://github.com/silver-flight-group/kakaocli#%EA%B0%9C%EC%9A%94](https://github.com/silver-flight-group/kakaocli#%EA%B0%9C%EC%9A%94)
+
+Both tools require authentication before this skill can run real extraction or summary work.
+
+For Antigravity2, run:
+
+```bash
+agy
+```
+
+Follow the login instructions shown by `agy`. After login, verify it with:
+
+```bash
+agy -p "Reply exactly: PONG"
+```
+
+For `kakaocli`, verify it with:
+
+```bash
+kakaocli auth
+```
+
+If `kakaocli auth` fails and local `clang` is installed, this package can try to infer the internal `KAKAO_USER_ID` from KakaoTalk preference plist SHA-512 revision keys. If that recovery fails, or if `clang` is not installed, authenticate manually:
+
+```bash
+kakaocli auth --user-id <KAKAO_USER_ID>
+```
+
+The skill records authentication status in the runtime config:
+
+```json
+{
+  "auth_status": {
+    "agy_checked_at": null,
+    "kakaocli_checked_at": null
+  },
+  "kakaocli_user_id": null
+}
+```
+
+Run the preflight check from the runtime workspace before skill operations:
+
+```bash
+scripts/check_auth.py --config kakao_daily_summary.config.json
+```
+
+The check updates `auth_status.agy_checked_at` and `auth_status.kakaocli_checked_at` only after successful checks. Failed checks set the matching timestamp back to `null`. A successful timestamp is reused for 5 hours. Within that window, extraction and summary commands skip the preflight check and only force a new check if `kakaocli` or `agy` fails during the real operation. If `kakaocli` recovery succeeds, it also stores the recovered `kakaocli_user_id` in the private runtime config so later extraction commands can pass the right database key derivation input.
+
 ## Current Behavior
 
 - Chat target: selected by `kakao_daily_summary.config.json`.
@@ -27,6 +96,7 @@ summary_prompt.md                    Editable Gemini prompt template
 scripts/kakao_chat_core.py           Shared KakaoTalk extraction and transcript formatting logic
 scripts/extract_kakao_chat.py        Chat transcript extraction CLI
 scripts/kakao_daily_summary.py       Gemini summary CLI
+scripts/check_auth.py                macOS dependency and auth preflight
 scripts/run_daily_summary_if_needed.sh
 scripts/install_launch_agent.sh
 scripts/install_runtime_workspace.sh Creates user-local runtime workspace
@@ -103,6 +173,11 @@ The local config, generated history, and logs are ignored by git; distribute `ka
   "timezone": "Asia/Seoul",
   "model": "Gemini 3.5 Flash (High)",
   "limit": 10000,
+  "auth_status": {
+    "agy_checked_at": null,
+    "kakaocli_checked_at": null
+  },
+  "kakaocli_user_id": null,
   "chats": {
     "example-room": {
       "name": "Example KakaoTalk Room",
@@ -121,6 +196,7 @@ Validate the config after editing:
 
 ```bash
 python3 -m json.tool kakao_daily_summary.config.json >/dev/null
+scripts/check_auth.py --config kakao_daily_summary.config.json
 ```
 
 ## Chatroom Selection
@@ -210,7 +286,7 @@ Normalization rules:
 - Reduce `ㅋ` repeated 3 or more times to `ㅋㅋㅋ`.
 - Convert exact `모두에게 삭제` to `[삭제된 메세지]`.
 - Remove JSON feed messages with `feedType` and `hidden: true`.
-- Remove JSON feed messages with `feedType` and `members`.
+- Remove JSON feed messages with `feedType` and `members` or `member`.
 
 The `--full` option bypasses normalization and uses this shape:
 
@@ -376,19 +452,36 @@ The relevant user preference plists are under:
 
 `/Applications/KakaoTalk.app/Contents/Info.plist` is only app bundle metadata.
 
-If `kakaocli auth` cannot auto-detect the user id, first check:
+The normal auth checks are:
 
 ```bash
+agy -p "Reply exactly: PONG"
 kakaocli auth
-kakaocli login --status
-kakaocli status
 ```
 
-This repo includes recovery helpers:
+The integrated preflight is:
+
+```bash
+scripts/check_auth.py --config kakao_daily_summary.config.json
+```
+
+By default the preflight reuses checks for 5 hours. Use `--force` when you intentionally want to ignore the cached check and verify both tools immediately:
+
+```bash
+scripts/check_auth.py --config kakao_daily_summary.config.json --force
+```
+
+When `kakaocli auth` fails and `clang` is available, `scripts/check_auth.py` automatically compiles and runs the C recovery helper against active SHA-512 revision hashes found in the KakaoTalk preference plists. The helper can also be run manually:
 
 ```bash
 clang -O3 -pthread scripts/find_kakao_user_id.c -o /tmp/find_kakao_user_id
 /tmp/find_kakao_user_id '<sha512-from-plist-key>' 100000000 1000000000 8
+```
+
+If recovery fails or `clang` is unavailable, provide the internal id manually:
+
+```bash
+kakaocli auth --user-id <KAKAO_USER_ID>
 ```
 
 Use auth recovery only when needed. Do not rewrite preference plists casually.
@@ -399,7 +492,9 @@ Run these after code/config changes:
 
 ```bash
 python3 -m json.tool kakao_daily_summary.config.json >/dev/null
-python3 -m py_compile scripts/kakao_chat_core.py scripts/extract_kakao_chat.py scripts/kakao_daily_summary.py
+python3 -m json.tool kakao_daily_summary.config.example.json >/dev/null
+python3 -m py_compile scripts/check_auth.py scripts/kakao_chat_core.py scripts/extract_kakao_chat.py scripts/kakao_daily_summary.py
+scripts/check_auth.py --config kakao_daily_summary.config.json
 scripts/extract_kakao_chat.py <chat_id> --start-date YYYY-MM-DD --limit 5
 scripts/kakao_daily_summary.py --date YYYY-MM-DD --dry-run --limit 5
 ```

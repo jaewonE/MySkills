@@ -5,6 +5,11 @@
   "timezone": "Asia/Seoul",
   "model": "Gemini 3.5 Flash (High)",
   "limit": 10000,
+  "auth_status": {
+    "agy_checked_at": null,
+    "kakaocli_checked_at": null
+  },
+  "kakaocli_user_id": null,
   "chats": {
     "example-room": {
       "name": "Example KakaoTalk Room",
